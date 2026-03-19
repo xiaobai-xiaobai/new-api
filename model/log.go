@@ -478,3 +478,43 @@ func DeleteOldLog(ctx context.Context, targetTimestamp int64, limit int) (int64,
 
 	return total, nil
 }
+
+// GetLogsByTokenIdWithFilter 根据 Token ID 和筛选条件查询日志（支持分页）
+func GetLogsByTokenIdWithFilter(tokenId int, modelName string, channel string, requestId string, startTimestamp int64, endTimestamp int64, startIdx int, num int) (logs []*Log, total int64, err error) {
+	tx := LOG_DB.Where("token_id = ?", tokenId)
+
+	if modelName != "" {
+		modelNamePattern, err := sanitizeLikePattern(modelName)
+		if err != nil {
+			return nil, 0, err
+		}
+		tx = tx.Where("model_name LIKE ? ESCAPE '!'", modelNamePattern)
+	}
+	if channel != "" {
+		tx = tx.Where("channel_id = ?", channel)
+	}
+	if requestId != "" {
+		tx = tx.Where("request_id = ?", requestId)
+	}
+	if startTimestamp != 0 {
+		tx = tx.Where("created_at >= ?", startTimestamp)
+	}
+	if endTimestamp != 0 {
+		tx = tx.Where("created_at <= ?", endTimestamp)
+	}
+
+	err = tx.Model(&Log{}).Count(&total).Error
+	if err != nil {
+		common.SysError("failed to count token logs: " + err.Error())
+		return nil, 0, errors.New("查询日志失败")
+	}
+
+	err = tx.Order("id desc").Limit(num).Offset(startIdx).Find(&logs).Error
+	if err != nil {
+		common.SysError("failed to search token logs: " + err.Error())
+		return nil, 0, errors.New("查询日志失败")
+	}
+
+	formatUserLogs(logs, startIdx)
+	return logs, total, err
+}

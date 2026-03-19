@@ -1,12 +1,14 @@
 package ali
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/claude"
@@ -100,6 +102,8 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 			} else {
 				fullRequestURL = fmt.Sprintf("%s/api/v1/services/aigc/multimodal-generation/generation", info.ChannelBaseUrl)
 			}
+		case constant.RelayModeAudioSpeech:
+			fullRequestURL = fmt.Sprintf("%s/api/v1/services/aigc/multimodal-generation/generation", info.ChannelBaseUrl)
 		case constant.RelayModeCompletions:
 			fullRequestURL = fmt.Sprintf("%s/compatible-mode/v1/completions", info.ChannelBaseUrl)
 		default:
@@ -130,6 +134,9 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 		if isWanModel(info.OriginModelName) {
 			req.Set("X-DashScope-Async", "enable")
 		}
+		req.Set("Content-Type", "application/json")
+	}
+	if info.RelayMode == constant.RelayModeAudioSpeech {
 		req.Set("Content-Type", "application/json")
 	}
 	return nil
@@ -207,8 +214,25 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 }
 
 func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.AudioRequest) (io.Reader, error) {
-	//TODO implement me
-	return nil, errors.New("not implemented")
+	if info.RelayMode != constant.RelayModeAudioSpeech {
+		return nil, errors.New("not implemented")
+	}
+	aliReq := AliTTSRequest{
+		Model: request.Model,
+		Input: AliTTSInput{
+			Text:         request.Input,
+			Voice:        request.Voice,
+			LanguageType: "Auto",
+		},
+	}
+	if request.Metadata != nil {
+		_ = common.Unmarshal(request.Metadata, &aliReq)
+	}
+	jsonData, err := common.Marshal(aliReq)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.NewReader(jsonData), nil
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
@@ -237,6 +261,8 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 			err, usage = aliImageHandler(a, c, resp, info)
 		case constant.RelayModeRerank:
 			err, usage = RerankHandler(c, resp, info)
+		case constant.RelayModeAudioSpeech:
+			err, usage = aliTTSHandler(c, resp, info)
 		default:
 			adaptor := openai.Adaptor{}
 			usage, err = adaptor.DoResponse(c, resp, info)

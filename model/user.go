@@ -312,6 +312,38 @@ func GetUserIdByAffCode(affCode string) (int, error) {
 	return user.Id, err
 }
 
+// GetUserByProviderId 通过第三方唯一标识获取用户
+// providerId 格式：github_xxx, discord_xxx, oidc_xxx, wechat_xxx, telegram_xxx, linuxdo_xxx
+func GetUserByProviderId(providerId string) (*User, error) {
+	if providerId == "" {
+		return nil, errors.New("providerId 为空！")
+	}
+
+	var user User
+	var err error
+
+	// 根据前缀判断是哪种第三方登录
+	if strings.HasPrefix(providerId, "github_") {
+		err = DB.Where("github_id = ?", strings.TrimPrefix(providerId, "github_")).First(&user).Error
+	} else if strings.HasPrefix(providerId, "discord_") {
+		err = DB.Where("discord_id = ?", strings.TrimPrefix(providerId, "discord_")).First(&user).Error
+	} else if strings.HasPrefix(providerId, "oidc_") {
+		err = DB.Where("oidc_id = ?", strings.TrimPrefix(providerId, "oidc_")).First(&user).Error
+	} else if strings.HasPrefix(providerId, "wechat_") {
+		err = DB.Where("wechat_id = ?", strings.TrimPrefix(providerId, "wechat_")).First(&user).Error
+	} else if strings.HasPrefix(providerId, "telegram_") {
+		err = DB.Where("telegram_id = ?", strings.TrimPrefix(providerId, "telegram_")).First(&user).Error
+	} else if strings.HasPrefix(providerId, "linuxdo_") {
+		err = DB.Where("linux_do_id = ?", strings.TrimPrefix(providerId, "linuxdo_")).First(&user).Error
+	} else {
+		// 通用模式，尝试在所有第三方 ID 字段中查找
+		err = DB.Where("github_id = ? OR discord_id = ? OR oidc_id = ? OR wechat_id = ? OR telegram_id = ? OR linux_do_id = ?",
+			providerId, providerId, providerId, providerId, providerId, providerId).First(&user).Error
+	}
+
+	return &user, err
+}
+
 func DeleteUserById(id int) (err error) {
 	if id == 0 {
 		return errors.New("id 为空！")

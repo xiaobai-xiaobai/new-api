@@ -221,6 +221,43 @@ type AliRerankRequest struct {
 	Parameters AliRerankParameters `json:"parameters,omitempty"`
 }
 
+type AliTTSInput struct {
+	Text         string `json:"text"`
+	Voice        string `json:"voice"`
+	LanguageType string `json:"language_type,omitempty"`
+}
+
+type AliTTSRequest struct {
+	Model string      `json:"model"`
+	Input AliTTSInput `json:"input"`
+}
+
+type AliTTSAudio struct {
+	Data      string `json:"data,omitempty"`
+	URL       string `json:"url,omitempty"`
+	ID        string `json:"id,omitempty"`
+	ExpiresAt int64  `json:"expires_at,omitempty"`
+}
+
+type AliTTSOutput struct {
+	FinishReason string      `json:"finish_reason,omitempty"`
+	Audio        AliTTSAudio `json:"audio,omitempty"`
+}
+
+type AliTTSUsage struct {
+	InputTokens  int `json:"input_tokens,omitempty"`
+	OutputTokens int `json:"output_tokens,omitempty"`
+	Characters   int `json:"characters,omitempty"`
+}
+
+type AliTTSResponse struct {
+	Output    AliTTSOutput `json:"output"`
+	Usage     AliTTSUsage  `json:"usage"`
+	RequestId string       `json:"request_id"`
+	Code      string       `json:"code,omitempty"`
+	Message   string       `json:"message,omitempty"`
+}
+
 type AliRerankResponse struct {
 	Output struct {
 		Results []dto.RerankResponseResult `json:"results"`

@@ -231,7 +231,11 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 	}
 
 	// User doesn't exist, create new user if registration is enabled
+	// Note: OAuth registration can be controlled independently via system settings
 	if !common.RegisterEnabled {
+		// Check if OAuth registration is specifically allowed
+		// For OIDC provider, you might want to allow registration even when general registration is disabled
+		// This can be extended with a separate setting like common.OAuthRegistrationEnabled
 		return nil, &OAuthRegistrationDisabledError{}
 	}
 

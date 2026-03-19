@@ -164,6 +164,67 @@ func GetTokenUsage(c *gin.Context) {
 	})
 }
 
+// GetTokenBalance 根据令牌返回剩余额度信息
+func GetTokenBalance(c *gin.Context) {
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"success": false,
+			"message": "No Authorization header",
+		})
+		return
+	}
+
+	parts := strings.Split(authHeader, " ")
+	if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"success": false,
+			"message": "Invalid Bearer token",
+		})
+		return
+	}
+	tokenKey := parts[1]
+
+	token, err := model.GetTokenByKey(strings.TrimPrefix(tokenKey, "sk-"), false)
+	if err != nil {
+		common.SysError("failed to get token by key: " + err.Error())
+		common.ApiErrorI18n(c, i18n.MsgTokenGetInfoFailed)
+		return
+	}
+
+	expiredAt := token.ExpiredTime
+	if expiredAt == -1 {
+		expiredAt = 0
+	}
+
+	// 计算总额度和剩余额度
+	totalGranted := token.RemainQuota + token.UsedQuota
+	totalUsed := token.UsedQuota
+	totalAvailable := token.RemainQuota
+
+	// 如果是无限额度，设置一个很大的值
+	if token.UnlimitedQuota {
+		totalGranted = 100000000
+		totalAvailable = 100000000
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    true,
+		"message": "ok",
+		"data": gin.H{
+			"object":               "token_balance",
+			"name":                 token.Name,
+			"total_granted":        totalGranted,
+			"total_used":           totalUsed,
+			"total_available":      totalAvailable,
+			"unlimited_quota":      token.UnlimitedQuota,
+			"model_limits":         token.GetModelLimitsMap(),
+			"model_limits_enabled": token.ModelLimitsEnabled,
+			"expires_at":           expiredAt,
+		},
+	})
+}
+
 func AddToken(c *gin.Context) {
 	token := model.Token{}
 	err := c.ShouldBindJSON(&token)

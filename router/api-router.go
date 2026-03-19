@@ -61,6 +61,7 @@ func SetApiRouter(router *gin.Engine) {
 			userRoute.POST("/passkey/login/finish", middleware.CriticalRateLimit(), controller.PasskeyLoginFinish)
 			//userRoute.POST("/tokenlog", middleware.CriticalRateLimit(), controller.TokenLog)
 			userRoute.GET("/logout", controller.Logout)
+			userRoute.POST("/third_party/token", middleware.CriticalRateLimit(), controller.GenerateTokenByThirdParty)
 			userRoute.POST("/epay/notify", controller.EpayNotify)
 			userRoute.GET("/epay/notify", controller.EpayNotify)
 			userRoute.GET("/groups", controller.GetUserGroups)
@@ -255,6 +256,9 @@ func SetApiRouter(router *gin.Engine) {
 			tokenRoute.POST("/batch", controller.DeleteTokenBatch)
 		}
 
+		// Token balance query endpoint (independent route, uses TokenAuthReadOnly only)
+		apiRouter.GET("/token/balance", middleware.TokenAuthReadOnly(), controller.GetTokenBalance)
+
 		usageRoute := apiRouter.Group("/usage")
 		usageRoute.Use(middleware.CORS(), middleware.CriticalRateLimit())
 		{
@@ -293,6 +297,13 @@ func SetApiRouter(router *gin.Engine) {
 		logRoute.Use(middleware.CORS(), middleware.CriticalRateLimit())
 		{
 			logRoute.GET("/token", middleware.TokenAuthReadOnly(), controller.GetLogByKey)
+		}
+
+		// 对外公开的 Token 使用记录查询接口（无需登录，仅需 API Key）
+		publicRoute := apiRouter.Group("/public")
+		publicRoute.Use(middleware.CORS(), middleware.CriticalRateLimit())
+		{
+			publicRoute.GET("/token-usage", controller.GetTokenUsageLogs)
 		}
 		groupRoute := apiRouter.Group("/group")
 		groupRoute.Use(middleware.AdminAuth())

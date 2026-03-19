@@ -22,6 +22,7 @@ import (
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type LoginRequest struct {
@@ -125,6 +126,146 @@ func Logout(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "",
 		"success": true,
+	})
+}
+
+// ThirdPartyTokenRequest 第三方令牌请求
+type ThirdPartyTokenRequest struct {
+	ProviderId string `json:"provider_id" validate:"required"` // 第三方唯一标识
+}
+
+// GenerateTokenByThirdParty 通过第三方标识生成令牌
+// 如果用户不存在，则自动注册并关联该标识
+// 如果用户没有默认令牌，则创建默认令牌
+func GenerateTokenByThirdParty(c *gin.Context) {
+	var req ThirdPartyTokenRequest
+	err := json.NewDecoder(c.Request.Body).Decode(&req)
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	if err := common.Validate.Struct(&req); err != nil {
+		common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
+		return
+	}
+
+	providerId := req.ProviderId
+
+	// 尝试通过第三方标识查找用户
+	user, err := model.GetUserByProviderId(providerId)
+	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			// 数据库错误
+			common.ApiErrorI18n(c, i18n.MsgDatabaseError)
+			common.SysLog(fmt.Sprintf("GetUserByProviderId error: %v", err))
+			return
+		}
+
+		// 用户不存在，自动注册
+		username := fmt.Sprintf("user_%s", common.GetRandomString(8))
+		password := common.GetRandomString(16)
+		newUser := model.User{
+			Username:    username,
+			Password:    password,
+			DisplayName: username,
+			Role:        common.RoleCommonUser,
+		}
+		// 根据 provider_id 的类型设置对应的字段
+		if strings.HasPrefix(providerId, "github_") {
+			newUser.GitHubId = strings.TrimPrefix(providerId, "github_")
+		} else if strings.HasPrefix(providerId, "discord_") {
+			newUser.DiscordId = strings.TrimPrefix(providerId, "discord_")
+		} else if strings.HasPrefix(providerId, "oidc_") {
+			newUser.OidcId = strings.TrimPrefix(providerId, "oidc_")
+		} else if strings.HasPrefix(providerId, "wechat_") {
+			newUser.WeChatId = strings.TrimPrefix(providerId, "wechat_")
+		} else if strings.HasPrefix(providerId, "telegram_") {
+			newUser.TelegramId = strings.TrimPrefix(providerId, "telegram_")
+		} else if strings.HasPrefix(providerId, "linuxdo_") {
+			newUser.LinuxDOId = strings.TrimPrefix(providerId, "linuxdo_")
+		} else {
+			// 通用模式，使用自定义字段存储（需要数据库支持）
+			// 这里简单处理，存储在 GitHubId 字段作为备用方案
+			newUser.GitHubId = providerId
+		}
+
+		if err := newUser.Insert(0); err != nil {
+			common.ApiError(c, err)
+			common.SysLog(fmt.Sprintf("Auto register user error: %v", err))
+			return
+		}
+
+		// 获取插入后的用户
+		user, err = model.GetUserById(newUser.Id, false)
+		if err != nil {
+			common.ApiErrorI18n(c, i18n.MsgDatabaseError)
+			common.SysLog(fmt.Sprintf("Get inserted user error: %v", err))
+			return
+		}
+	}
+
+	// 检查用户状态
+	if user.Status != common.UserStatusEnabled {
+		common.ApiErrorI18n(c, i18n.MsgUserDisabled)
+		return
+	}
+
+	// 查找用户的默认令牌
+	tokens, err := model.GetAllUserTokens(user.Id, 0, -1)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	var token *model.Token
+	if len(tokens) == 0 {
+		// 没有令牌，创建默认令牌
+		key, err := common.GenerateKey()
+		if err != nil {
+			common.ApiErrorI18n(c, i18n.MsgTokenGenerateFailed)
+			common.SysLog("failed to generate token key: " + err.Error())
+			return
+		}
+
+		token = &model.Token{
+			UserId:             user.Id,
+			Name:               fmt.Sprintf("%s的默认令牌", user.Username),
+			Key:                key,
+			CreatedTime:        common.GetTimestamp(),
+			AccessedTime:       common.GetTimestamp(),
+			ExpiredTime:        -1, // 永不过期
+			RemainQuota:        500000,
+			UnlimitedQuota:     true,
+			ModelLimitsEnabled: false,
+			ModelLimits:        "",
+		}
+		if setting.DefaultUseAutoGroup {
+			token.Group = "auto"
+		}
+
+		if err := token.Insert(); err != nil {
+			common.ApiError(c, err)
+			common.SysLog("failed to insert default token: " + err.Error())
+			return
+		}
+	} else {
+		// 使用第一个令牌作为返回
+		token = tokens[0]
+	}
+
+	// 返回完整令牌信息
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data": gin.H{
+			"user_id":      user.Id,
+			"username":     user.Username,
+			"api_key":      token.Key,            // 完整密钥
+			"masked_key":   token.GetMaskedKey(), // 掩码密钥
+			"token_id":     token.Id,
+			"token_name":   token.Name,
+			"remain_quota": token.RemainQuota,
+		},
 	})
 }
 
