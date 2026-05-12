@@ -25,18 +25,18 @@ func oaiImage2AliImageRequest(info *relaycommon.RelayInfo, request dto.ImageRequ
 	var imageRequest AliImageRequest
 	imageRequest.Model = request.Model
 	imageRequest.ResponseFormat = request.ResponseFormat
+	// Build default parameters from OpenAI standard fields first (ensures values exist even when DeepCopy clears Extra)
+	imageRequest.Parameters = AliImageParameters{
+		Size:      strings.Replace(request.Size, "x", "*", -1),
+		N:         int(lo.FromPtrOr(request.N, uint(1))),
+		Watermark: request.Watermark,
+	}
+	// Override with explicit parameters and input from Extra if provided
 	if request.Extra != nil {
 		if val, ok := request.Extra["parameters"]; ok {
 			err := common.Unmarshal(val, &imageRequest.Parameters)
 			if err != nil {
 				return nil, fmt.Errorf("invalid parameters field: %w", err)
-			}
-		} else {
-			// 兼容没有parameters字段的情况，从openai标准字段中提取参数
-			imageRequest.Parameters = AliImageParameters{
-				Size:      strings.Replace(request.Size, "x", "*", -1),
-				N:         int(lo.FromPtrOr(request.N, uint(1))),
-				Watermark: request.Watermark,
 			}
 		}
 		if val, ok := request.Extra["input"]; ok {
@@ -291,9 +291,25 @@ func aliImageHandler(a *Adaptor, c *gin.Context, resp *http.Response, info *rela
 		return types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError), nil
 	}
 
-	if aliTaskResponse.Message != "" {
-		logger.LogError(c, "ali_async_task_failed: "+aliTaskResponse.Message)
-		return types.NewError(errors.New(aliTaskResponse.Message), types.ErrorCodeBadResponse), nil
+	// Debug: log raw DashScope response for troubleshooting
+	logger.LogDebug(c, "ali_image_raw_response: "+string(responseBody))
+
+	if aliTaskResponse.Message != "" || aliTaskResponse.Code != "" && aliTaskResponse.Code != "200" {
+		errMsg := aliTaskResponse.Message
+		if errMsg == "" {
+			errMsg = aliTaskResponse.Code
+		}
+		logger.LogError(c, "ali_async_task_failed: "+errMsg)
+		return types.NewError(errors.New(errMsg), types.ErrorCodeBadResponse), nil
+	}
+
+	// Check for errors in Output.Code/Output.Message (multimodal-generation format)
+	if aliTaskResponse.Output.Code != "" && aliTaskResponse.Output.Choices == nil && aliTaskResponse.Output.Results == nil {
+		return types.WithOpenAIError(types.OpenAIError{
+			Message: aliTaskResponse.Output.Message,
+			Type:    "ali_error",
+			Code:    aliTaskResponse.Output.Code,
+		}, resp.StatusCode), nil
 	}
 
 	var (
