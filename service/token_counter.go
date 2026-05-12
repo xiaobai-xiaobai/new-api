@@ -209,11 +209,14 @@ func EstimateRequestToken(c *gin.Context, meta *types.TokenCountMeta, info *rela
 			// get ext and io.seeker
 			ext := filepath.Ext(fileHeader.Filename)
 			duration, err := common.GetAudioDuration(c.Request.Context(), file, ext)
-			if err != nil {
-				return 0, fmt.Errorf("error getting audio duration: %v", err)
+			if err != nil || duration == 0 {
+				// fallback: estimate by file size (rough: ~1KB/sec for compressed audio)
+				fallbackDuration := float64(fileHeader.Size) / 1000.0
+				totalAudioToken += int(math.Round(math.Ceil(fallbackDuration) / 60.0 * 1000))
+			} else {
+				// 一分钟 1000 token，与 $price / minute 对齐
+				totalAudioToken += int(math.Round(math.Ceil(duration) / 60.0 * 1000))
 			}
-			// 一分钟 1000 token，与 $price / minute 对齐
-			totalAudioToken += int(math.Round(math.Ceil(duration) / 60.0 * 1000))
 		}
 		return totalAudioToken, nil
 	}

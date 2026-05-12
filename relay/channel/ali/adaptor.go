@@ -48,6 +48,11 @@ func isSyncImageModel(modelName string) bool {
 	return model_setting.IsSyncImageModel(modelName)
 }
 
+func isCosyvoiceModel(modelName string) bool {
+	lower := strings.ToLower(modelName)
+	return strings.Contains(lower, "cosyvoice") || strings.Contains(lower, "sambert")
+}
+
 func (a *Adaptor) ConvertGeminiRequest(*gin.Context, *relaycommon.RelayInfo, *dto.GeminiChatRequest) (any, error) {
 	//TODO implement me
 	return nil, errors.New("not implemented")
@@ -103,6 +108,12 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 				fullRequestURL = fmt.Sprintf("%s/api/v1/services/aigc/multimodal-generation/generation", info.ChannelBaseUrl)
 			}
 		case constant.RelayModeAudioSpeech:
+			if isCosyvoiceModel(info.OriginModelName) {
+				fullRequestURL = fmt.Sprintf("%s/api/v1/services/audio/tts/SpeechSynthesizer", info.ChannelBaseUrl)
+			} else {
+				fullRequestURL = fmt.Sprintf("%s/api/v1/services/aigc/multimodal-generation/generation", info.ChannelBaseUrl)
+			}
+		case constant.RelayModeAudioTranscription, constant.RelayModeAudioTranslation:
 			fullRequestURL = fmt.Sprintf("%s/api/v1/services/aigc/multimodal-generation/generation", info.ChannelBaseUrl)
 		case constant.RelayModeCompletions:
 			fullRequestURL = fmt.Sprintf("%s/compatible-mode/v1/completions", info.ChannelBaseUrl)
@@ -137,6 +148,9 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 		req.Set("Content-Type", "application/json")
 	}
 	if info.RelayMode == constant.RelayModeAudioSpeech {
+		req.Set("Content-Type", "application/json")
+	}
+	if info.RelayMode == constant.RelayModeAudioTranscription || info.RelayMode == constant.RelayModeAudioTranslation {
 		req.Set("Content-Type", "application/json")
 	}
 	return nil
@@ -214,9 +228,30 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 }
 
 func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.AudioRequest) (io.Reader, error) {
-	if info.RelayMode != constant.RelayModeAudioSpeech {
-		return nil, errors.New("not implemented")
+	if info.RelayMode == constant.RelayModeAudioTranscription || info.RelayMode == constant.RelayModeAudioTranslation {
+		return convertASRRequest(c, info, request)
 	}
+	if info.RelayMode != constant.RelayModeAudioSpeech {
+		return nil, errors.New("unsupported audio relay mode")
+	}
+	if isCosyvoiceModel(info.OriginModelName) {
+		aliReq := AliCosyvoiceTTSRequest{
+			Model: request.Model,
+			Input: AliCosyvoiceTTSInput{
+				Text:  request.Input,
+				Voice: request.Voice,
+			},
+		}
+		if request.Metadata != nil {
+			_ = common.Unmarshal(request.Metadata, &aliReq)
+		}
+		jsonData, err := common.Marshal(aliReq)
+		if err != nil {
+			return nil, err
+		}
+		return bytes.NewReader(jsonData), nil
+	}
+	// qwen3-tts uses multimodal-generation format
 	aliReq := AliTTSRequest{
 		Model: request.Model,
 		Input: AliTTSInput{
@@ -263,6 +298,8 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 			err, usage = RerankHandler(c, resp, info)
 		case constant.RelayModeAudioSpeech:
 			err, usage = aliTTSHandler(c, resp, info)
+		case constant.RelayModeAudioTranscription, constant.RelayModeAudioTranslation:
+			err, usage = aliASRHandler(c, resp, info)
 		default:
 			adaptor := openai.Adaptor{}
 			usage, err = adaptor.DoResponse(c, resp, info)

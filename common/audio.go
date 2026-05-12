@@ -22,7 +22,7 @@ func GetAudioDuration(ctx context.Context, f io.ReadSeeker, ext string) (duratio
 	SysLog(fmt.Sprintf("GetAudioDuration: ext=%s", ext))
 	// 根据文件扩展名选择解析器
 	switch ext {
-	case ".mp3":
+	case ".mp3", ".mpga", ".mp2":
 		duration, err = getMP3Duration(f)
 	case ".wav":
 		duration, err = getWAVDuration(f)

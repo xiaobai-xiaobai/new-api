@@ -258,6 +258,81 @@ type AliTTSResponse struct {
 	Message   string       `json:"message,omitempty"`
 }
 
+// Cosyvoice TTS DTOs (SpeechSynthesizer endpoint)
+
+type AliCosyvoiceTTSInput struct {
+	Text       string `json:"text"`
+	Voice      string `json:"voice,omitempty"`
+	Format     string `json:"format,omitempty"`
+	SampleRate int    `json:"sample_rate,omitempty"`
+	Rate       int    `json:"rate,omitempty"`
+	Pitch      int    `json:"pitch,omitempty"`
+	Volume     int    `json:"volume,omitempty"`
+}
+
+type AliCosyvoiceTTSRequest struct {
+	Model string               `json:"model"`
+	Input AliCosyvoiceTTSInput `json:"input"`
+}
+
+// ASR (speech-to-text) DTOs
+
+type AliInputAudio struct {
+	Data   string `json:"data"`
+	Format string `json:"format"`
+}
+
+type AliASRContent struct {
+	Type       string         `json:"type"`
+	InputAudio *AliInputAudio `json:"input_audio,omitempty"`
+	Text       string         `json:"text,omitempty"`
+}
+
+type AliASRInput struct {
+	Messages []AliMessage `json:"messages"`
+}
+
+type AliASRParameters struct {
+	ResultFormat string `json:"result_format,omitempty"`
+}
+
+type AliASRRequest struct {
+	Model      string           `json:"model"`
+	Input      AliASRInput      `json:"input"`
+	Parameters AliASRParameters `json:"parameters,omitempty"`
+}
+
+type AliASRMessageContent struct {
+	Text string `json:"text,omitempty"`
+}
+
+type AliASRChoiceMessage struct {
+	Role    string                 `json:"role"`
+	Content []AliASRMessageContent `json:"content"`
+}
+
+type AliASRChoice struct {
+	FinishReason string              `json:"finish_reason,omitempty"`
+	Message      AliASRChoiceMessage `json:"message"`
+}
+
+type AliASROutput struct {
+	Choices []AliASRChoice `json:"choices,omitempty"`
+}
+
+type AliASRUsage struct {
+	InputTokens  int `json:"input_tokens,omitempty"`
+	OutputTokens int `json:"output_tokens,omitempty"`
+}
+
+type AliASRResponse struct {
+	Output    AliASROutput `json:"output"`
+	Usage     AliASRUsage  `json:"usage"`
+	RequestId string       `json:"request_id"`
+	Code      string       `json:"code,omitempty"`
+	Message   string       `json:"message,omitempty"`
+}
+
 type AliRerankResponse struct {
 	Output struct {
 		Results []dto.RerankResponseResult `json:"results"`
