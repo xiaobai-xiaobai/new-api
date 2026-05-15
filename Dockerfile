@@ -24,7 +24,7 @@ RUN go mod download
 
 COPY . .
 COPY --from=builder /build/dist ./web/dist
-RUN go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=v1.0.0'" -o mr-maas
+RUN go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$(cat VERSION)'" -o mr-maas
 
 FROM registry.cn-hangzhou.aliyuncs.com/mr-docker-hub/debian:bookworm-slim
 

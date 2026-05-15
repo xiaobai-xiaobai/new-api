@@ -59,6 +59,10 @@ func oaiImage2AliImageRequest(info *relaycommon.RelayInfo, request dto.ImageRequ
 		info.PriceData.AddOtherRatio("n", float64(imageRequest.Parameters.N))
 	}
 
+	// Debug: log the request state for troubleshooting image generation
+	common.SysLog(fmt.Sprintf("ali_image_req_debug: Extra=nil=%v, Prompt=%s, isSync=%v, Input=nil=%v, Parameters.N=%d",
+		request.Extra == nil, request.Prompt, isSync, imageRequest.Input == nil, imageRequest.Parameters.N))
+
 	// 同步图片模型和异步图片模型请求格式不一样
 	if isSync {
 		if imageRequest.Input == nil {
@@ -291,10 +295,11 @@ func aliImageHandler(a *Adaptor, c *gin.Context, resp *http.Response, info *rela
 		return types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError), nil
 	}
 
-	// Debug: log raw DashScope response for troubleshooting
-	logger.LogDebug(c, "ali_image_raw_response: "+string(responseBody))
+	// Log raw DashScope response for troubleshooting
+	logger.LogError(c, "ali_image_raw_response: "+string(responseBody))
 
-	if aliTaskResponse.Message != "" || aliTaskResponse.Code != "" && aliTaskResponse.Code != "200" {
+	// Check for top-level error: only treat as error if Code is non-empty and NOT a success indicator
+	if aliTaskResponse.Code != "" && aliTaskResponse.Code != "200" && aliTaskResponse.Code != "Success" {
 		errMsg := aliTaskResponse.Message
 		if errMsg == "" {
 			errMsg = aliTaskResponse.Code
@@ -312,12 +317,19 @@ func aliImageHandler(a *Adaptor, c *gin.Context, resp *http.Response, info *rela
 		}, resp.StatusCode), nil
 	}
 
+	// Log sync/async path decision
+	logger.LogError(c, fmt.Sprintf("ali_image_handler: IsSyncImageModel=%v, hasChoices=%v, hasResults=%v, TaskId=%s",
+		a.IsSyncImageModel, len(aliTaskResponse.Output.Choices) > 0, len(aliTaskResponse.Output.Results) > 0, aliTaskResponse.Output.TaskId))
+
 	var (
 		aliResponse    *AliResponse
 		originRespBody []byte
 	)
 
-	if a.IsSyncImageModel {
+	// Determine sync/async path based on response content, not just model config
+	// A response with Choices or Results is a sync response, even if config says async
+	isActuallySync := len(aliTaskResponse.Output.Choices) > 0 || len(aliTaskResponse.Output.Results) > 0
+	if a.IsSyncImageModel || isActuallySync {
 		aliResponse = &aliTaskResponse
 		originRespBody = responseBody
 	} else {

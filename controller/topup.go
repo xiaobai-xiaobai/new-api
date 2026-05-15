@@ -20,6 +20,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 )
 
 func GetTopUpInfo(c *gin.Context) {
@@ -136,6 +137,15 @@ func RequestEpay(c *gin.Context) {
 		c.JSON(200, gin.H{"message": "error", "data": fmt.Sprintf("充值数量不能小于 %d", getMinTopup())})
 		return
 	}
+	// ✅ 添加最大充值金额限制(防止恶意大额充值)
+	maxTopup := int64(1000000000) // 默认最大10亿额度
+	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
+		maxTopup = maxTopup * int64(common.QuotaPerUnit)
+	}
+	if req.Amount > maxTopup {
+		c.JSON(200, gin.H{"message": "error", "data": fmt.Sprintf("充值数量不能超过 %d", maxTopup)})
+		return
+	}
 
 	id := c.GetInt("id")
 	group, err := model.GetUserGroup(id, true)
@@ -146,6 +156,12 @@ func RequestEpay(c *gin.Context) {
 	payMoney := getPayMoney(req.Amount, group)
 	if payMoney < 0.01 {
 		c.JSON(200, gin.H{"message": "error", "data": "充值金额过低"})
+		return
+	}
+	// ✅ 添加支付金额合理性检查(防止异常金额)
+	if payMoney > 100000 { // 单笔支付不超过10万元
+		log.Printf("⚠️ 异常充值请求: user_id=%d, amount=%d, payMoney=%.2f", id, req.Amount, payMoney)
+		c.JSON(200, gin.H{"message": "error", "data": "充值金额超出限制"})
 		return
 	}
 
@@ -279,36 +295,81 @@ func EpayNotify(c *gin.Context) {
 	}
 
 	if verifyInfo.TradeStatus == epay.StatusTradeSuccess {
-		log.Println(verifyInfo)
+		log.Printf("📥 易支付回调: %+v", verifyInfo)
 		LockOrder(verifyInfo.ServiceTradeNo)
 		defer UnlockOrder(verifyInfo.ServiceTradeNo)
 		topUp := model.GetTopUpByTradeNo(verifyInfo.ServiceTradeNo)
 		if topUp == nil {
-			log.Printf("易支付回调未找到订单: %v", verifyInfo)
+			log.Printf("❌ 易支付回调未找到订单: %v", verifyInfo)
 			return
 		}
 		if topUp.Status == "pending" {
-			topUp.Status = "success"
-			err := topUp.Update()
+			// ✅ 安全校验:验证回调金额与订单金额是否一致
+			callbackMoneyStr := verifyInfo.Money
+			callbackMoney, err := strconv.ParseFloat(callbackMoneyStr, 64)
 			if err != nil {
-				log.Printf("易支付回调更新订单失败: %v", topUp)
+				log.Printf("⚠️ 回调金额格式错误! 订单号:%s, 回调金额:%s", verifyInfo.ServiceTradeNo, callbackMoneyStr)
 				return
 			}
-			//user, _ := model.GetUserById(topUp.UserId, false)
-			//user.Quota += topUp.Amount * 500000
+			expectedMoney := topUp.Money
+			// 允许0.01元的误差(浮点数精度问题)
+			moneyDiff := callbackMoney - expectedMoney
+			if moneyDiff < -0.01 || moneyDiff > 0.01 {
+				log.Printf("⚠️ 金额不匹配! 订单号:%s, 预期金额:%.2f, 回调金额:%.2f, 差额:%.2f",
+					verifyInfo.ServiceTradeNo, expectedMoney, callbackMoney, moneyDiff)
+				// ⚠️ 标记为可疑订单,不自动完成
+				topUp.Status = "suspicious"
+				topUp.Update()
+				model.RecordLog(topUp.UserId, model.LogTypeError,
+					fmt.Sprintf("易支付回调金额异常! 订单号:%s, 预期:%.2f, 实际:%.2f",
+						verifyInfo.ServiceTradeNo, expectedMoney, callbackMoney))
+				return
+			}
+
+			// ✅ 二次校验:验证充值额度是否在合理范围内
 			dAmount := decimal.NewFromInt(int64(topUp.Amount))
 			dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
 			quotaToAdd := int(dAmount.Mul(dQuotaPerUnit).IntPart())
-			err = model.IncreaseUserQuota(topUp.UserId, quotaToAdd, true)
-			if err != nil {
-				log.Printf("易支付回调更新用户失败: %v", topUp)
+
+			// 单次充值不超过10亿额度
+			if quotaToAdd > 1000000000 {
+				log.Printf("⚠️ 充值额度过大! 订单号:%s, 额度:%d", verifyInfo.ServiceTradeNo, quotaToAdd)
+				topUp.Status = "suspicious"
+				topUp.Update()
+				model.RecordLog(topUp.UserId, model.LogTypeError,
+					fmt.Sprintf("易支付回调额度过大! 订单号:%s, 额度:%d",
+						verifyInfo.ServiceTradeNo, quotaToAdd))
 				return
 			}
-			log.Printf("易支付回调更新用户成功 %v", topUp)
-			model.RecordLog(topUp.UserId, model.LogTypeTopup, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%f", logger.LogQuota(quotaToAdd), topUp.Money))
+
+			// ✅ 使用事务保证原子性
+			if err = model.DB.Transaction(func(tx *gorm.DB) error {
+				// 更新订单状态
+				topUp.Status = "success"
+				topUp.CompleteTime = common.GetTimestamp()
+				if err := tx.Save(topUp).Error; err != nil {
+					return err
+				}
+
+				// 增加用户额度
+				if err := tx.Model(&model.User{}).Where("id = ?", topUp.UserId).
+					Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
+					return err
+				}
+
+				return nil
+			}); err != nil {
+				log.Printf("❌ 易支付回调处理失败: %v, 订单: %v", err, topUp)
+				return
+			}
+			log.Printf("✅ 易支付充值成功: 订单号=%s, 用户ID=%d, 充值额度=%d, 支付金额=%.2f",
+				verifyInfo.ServiceTradeNo, topUp.UserId, quotaToAdd, topUp.Money)
+			model.RecordLog(topUp.UserId, model.LogTypeTopup,
+				fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%.2f",
+					logger.LogQuota(quotaToAdd), topUp.Money))
 		}
 	} else {
-		log.Printf("易支付异常回调: %v", verifyInfo)
+		log.Printf("⚠️ 易支付异常回调: %v", verifyInfo)
 	}
 }
 
