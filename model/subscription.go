@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"sync"
@@ -592,6 +593,14 @@ func upsertSubscriptionTopUpTx(tx *gorm.DB, order *SubscriptionOrder) error {
 			return tx.Create(&topup).Error
 		}
 		return err
+	}
+	// ✅ 安全校验:只有当 TopUp 是订阅相关时才更新 Money
+	// 如果 TopUp 已经有正常的 payment_method (如 wxpay/alipay),不应该被订阅订单覆盖
+	if topup.PaymentMethod != "" && topup.PaymentMethod != order.PaymentMethod {
+		log.Printf("⚠️ 警告:尝试用订阅订单覆盖已有支付方式! trade_no=%s, 原支付方式=%s, 新支付方式=%s",
+			order.TradeNo, topup.PaymentMethod, order.PaymentMethod)
+		// 不覆盖已有的正常充值记录
+		return nil
 	}
 	topup.Money = order.Money
 	if topup.PaymentMethod == "" {

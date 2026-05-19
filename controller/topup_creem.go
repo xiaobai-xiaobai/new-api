@@ -361,6 +361,11 @@ func handleCheckoutCompleted(c *gin.Context, event *CreemWebhookEvent) {
 
 	log.Printf("Creem充值成功 - 订单号: %s, 充值额度: %d, 支付金额: %.2f",
 		referenceId, topUp.Amount, topUp.Money)
+
+	// ✅ 安全检查:新用户或未消费用户充值,发送告警邮件给管理员
+	quota := int(topUp.Money * common.QuotaPerUnit)
+	checkAndNotifySuspiciousTopup(topUp.UserId, quota, topUp.Money, referenceId, "creem")
+
 	c.Status(http.StatusOK)
 }
 

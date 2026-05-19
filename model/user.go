@@ -303,6 +303,20 @@ func GetUserById(id int, selectAll bool) (*User, error) {
 	return &user, err
 }
 
+func GetUserByOidcId(oidcId string, selectAll bool) (*User, error) {
+	if oidcId == "" {
+		return nil, errors.New("oidc_id 为空！")
+	}
+	var user User
+	var err error
+	if selectAll {
+		err = DB.First(&user, "oidc_id = ?", oidcId).Error
+	} else {
+		err = DB.Omit("password").First(&user, "oidc_id = ?", oidcId).Error
+	}
+	return &user, err
+}
+
 func GetUserIdByAffCode(affCode string) (int, error) {
 	if affCode == "" {
 		return 0, errors.New("affCode 为空！")
@@ -926,6 +940,32 @@ func increaseUserQuota(id int, quota int) (err error) {
 		return err
 	}
 	return err
+}
+
+// ForceIncreaseUserQuota 强制立即写DB增加额度（不走批量更新缓存），用于管理操作需立即生效的场景
+func ForceIncreaseUserQuota(id int, quota int) (err error) {
+	if quota < 0 {
+		return errors.New("quota 不能为负数！")
+	}
+	gopool.Go(func() {
+		if err := cacheIncrUserQuota(id, int64(quota)); err != nil {
+			common.SysLog("failed to increase user quota cache: " + err.Error())
+		}
+	})
+	return increaseUserQuota(id, quota)
+}
+
+// ForceDecreaseUserQuota 强制立即写DB减少额度（不走批量更新缓存），用于管理操作需立即生效的场景
+func ForceDecreaseUserQuota(id int, quota int) (err error) {
+	if quota < 0 {
+		return errors.New("quota 不能为负数！")
+	}
+	gopool.Go(func() {
+		if err := cacheDecrUserQuota(id, int64(quota)); err != nil {
+			common.SysLog("failed to decrease user quota cache: " + err.Error())
+		}
+	})
+	return decreaseUserQuota(id, quota)
 }
 
 func DecreaseUserQuota(id int, quota int) (err error) {

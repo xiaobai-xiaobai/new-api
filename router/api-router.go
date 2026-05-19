@@ -49,6 +49,12 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.POST("/stripe/webhook", controller.StripeWebhook)
 		apiRouter.POST("/creem/webhook", controller.CreemWebhook)
 
+		// 用户额度查询接口（无需认证）
+		quotaCtrl := controller.NewUserQuotaController()
+		apiRouter.GET("/user/balance", quotaCtrl.GetUserBalance)
+		apiRouter.GET("/user/usage", quotaCtrl.GetUsageStats)
+		apiRouter.POST("/user/quota/update", quotaCtrl.UpdateQuota)
+
 		// Universal secure verification routes
 		apiRouter.POST("/verify", middleware.UserAuth(), middleware.CriticalRateLimit(), controller.UniversalVerify)
 

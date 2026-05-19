@@ -99,7 +99,7 @@ func Recharge(referenceId string, customerId string) (err error) {
 		return errors.New("充值失败，请稍后重试")
 	}
 
-	RecordLog(topUp.UserId, LogTypeTopup, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%d", logger.FormatQuota(int(quota)), topUp.Amount))
+	RecordLog(topUp.UserId, LogTypeTopup, fmt.Sprintf("使用在线充值成功，充值额度: %v，支付金额：%.2f", logger.FormatQuota(int(quota)), topUp.Money))
 
 	return nil
 }

@@ -53,3 +53,29 @@ func (b *BoolValue) UnmarshalJSON(data []byte) error {
 func (b BoolValue) MarshalJSON() ([]byte, error) {
 	return json.Marshal(bool(b))
 }
+
+// StringValue 兼容 string 和 number 类型的 JSON 值，自动将数字转为字符串
+type StringValue string
+
+func (s *StringValue) UnmarshalJSON(b []byte) error {
+	var str string
+	if err := json.Unmarshal(b, &str); err == nil {
+		*s = StringValue(str)
+		return nil
+	}
+	// 传入的是数字，转为字符串
+	var num json.Number
+	if err := json.Unmarshal(b, &num); err != nil {
+		return err
+	}
+	*s = StringValue(num.String())
+	return nil
+}
+
+func (s StringValue) MarshalJSON() ([]byte, error) {
+	return json.Marshal(string(s))
+}
+
+func (s StringValue) String() string {
+	return string(s)
+}

@@ -204,13 +204,20 @@ func sessionCompleted(event stripe.Event) {
 
 	err := model.Recharge(referenceId, customerId)
 	if err != nil {
-		log.Println(err.Error(), referenceId)
+		log.Printf("❌ Stripe充值失败: %v, referenceId=%s", err.Error(), referenceId)
 		return
 	}
 
 	total, _ := strconv.ParseFloat(event.GetObjectValue("amount_total"), 64)
 	currency := strings.ToUpper(event.GetObjectValue("currency"))
-	log.Printf("收到款项：%s, %.2f(%s)", referenceId, total/100, currency)
+	log.Printf("✅ Stripe充值成功: referenceId=%s, 支付金额=%.2f(%s)", referenceId, total/100, currency)
+
+	// ✅ 安全检查:新用户或未消费用户充值,发送告警邮件给管理员
+	topUp := model.GetTopUpByTradeNo(referenceId)
+	if topUp != nil {
+		quota := int(topUp.Money * common.QuotaPerUnit)
+		checkAndNotifySuspiciousTopup(topUp.UserId, quota, topUp.Money, referenceId, "stripe")
+	}
 }
 
 func sessionExpired(event stripe.Event) {
